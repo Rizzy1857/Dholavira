@@ -125,6 +125,20 @@ router.get('/', async (req, res, next) => {
       filters: { type: type || 'all', district: district || 'all', severity: severity || 'all' },
     });
   } catch (err) {
+    if (err.message && err.message.includes('ECONNREFUSED')) {
+      logger.warn(TAG, 'Database is down! Serving mock alerts for demo mode.');
+      return response.success(res, [
+        {
+          id: 1, title: 'DEMO: Heavy rainfall warning', description: 'This is a mock alert generated because PostgreSQL is not running.', alert_type: 'heavy_rain', severity: 'warning', district: 'Wayanad', is_verified: true,
+        },
+        {
+          id: 2, title: 'DEMO: Road blocked near Munnar', description: 'Mock alert indicating debris flow blocking road.', alert_type: 'road_block', severity: 'advisory', district: 'Idukki', is_verified: false,
+        }
+      ], 200, {
+        pagination: { page: 1, limit: 20, total: 2, totalPages: 1 },
+        filters: {}
+      });
+    }
     next(err);
   }
 });
