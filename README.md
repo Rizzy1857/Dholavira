@@ -26,7 +26,7 @@ This repo is the **no-loss engineering blueprint** plus a **working reference ba
 ### Layer 4 — Command Gateway (cloud + triage)
 
 - Nodes: Cloud service + PostGIS + dashboard.
-- Behavior: Verify signatures, dedupe, spatial indexing, heatmaps, CAP alert downlink.
+- Behavior: Verify signatures, dedupe, spatial indexing, heatmaps, CAP alert downlink, **resource allocation** (warehouses → hospitals, robust margins, scenario planning).
 
 ## Non‑negotiable constraints
 
@@ -35,6 +35,56 @@ This repo is the **no-loss engineering blueprint** plus a **working reference ba
 - **Cryptographically authenticated**: reject spoofed SOS.
 - **Works offline-first**: phones + edge nodes must function without DNS/internet.
 
+---
+
+## Resource allocation (Layer 4 triage)
+
+Given ingested SOS + known supply/demand, the backend computes **robust supply routing** across scenarios (e.g., road damage, demand spike, node outage).
+
+See `ALLOCATION.md` for:
+
+- Multi-tier network model (warehouses, hubs, hospitals, shelters, routes).
+- Scenario-based planning + human-in-the-loop (HITL) overrides.
+- Robust margins + explanations.
+- Integration with SOS ingest.
+
+## Three-module architecture
+
+### 1. Communication (DTN + relay)
+Layers 1–3: BLE mesh → LoRa sentinels → vehicular DTN. See `MODULES.md`.
+
+### 2. Battery optimization (on-device + cloud-side)
+- **On-device**: LoRa CAD duty-cycling (2.9s sleep / 0.1s sniff = 97% power savings), RSSI-based suppression.
+- **Cloud-side**: track device power state (CRITICAL/LOW/MEDIUM/GOOD) and deprioritize low-battery nodes in allocation.
+- **Flutter endpoints**: `/v1/device/battery/:device_id`, `/v1/optimize/config`, `/v1/stats/battery/record`.
+
+See `FLUTTER_BATTERY_INTEGRATION.md` for full mobile integration guide.
+
+### 3. Resource allocation (supply routing)
+Scenario-based supply dispatch with robust margins and HITL overrides. See `ALLOCATION.md`.
+
+## Mobile (Flutter/Android) Integration
+
+The backend provides **battery-aware APIs** for Flutter apps running on affected-area phones:
+
+**Key endpoints**:
+- `GET /v1/device/battery/:device_id` — cloud's view of device battery + recommendations
+- `GET /v1/optimize/config?power_state=...` — power-saving parameters (RSSI thresholds, CAD cycles, retention)
+- `POST /v1/stats/battery/record` — device sends battery stats for analytics
+- `GET /v1/admin/battery-status` — ops dashboard (network-wide battery health)
+
+**Power states**:
+- **CRITICAL** (<5%): suppress non-emergency messages; 1h retention
+- **LOW** (5–20%): selective forwarding; 24h retention
+- **MEDIUM** (20–60%): balanced relay; 3d retention
+- **GOOD** (>60%): normal operation; 7d retention
+
+Flutter apps use these endpoints to:
+1. Fetch cloud's battery estimation + optimization config
+2. Apply CAD sleep/sniff tuning, RSSI thresholds, message suppression locally
+3. Send battery stats periodically for dashboard analytics
+
+See `FLUTTER_BATTERY_INTEGRATION.md` for detailed implementation patterns, code examples, and best practices.
 
 ---
 

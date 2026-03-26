@@ -6,6 +6,7 @@ import { createDbPool } from './db.mjs';
 import { parseSosPayloadV1 } from './sosPayloadV1.mjs';
 import { verifyEd25519 } from './ed25519.mjs';
 import { createLogger } from './logger.mjs';
+import { BatteryOptimizationManager } from './batteryManager.mjs';
 
 dotenv.config();
 
@@ -14,6 +15,7 @@ app.use(express.json({ limit: '256kb' }));
 
 const pool = createDbPool();
 const logger = createLogger({ pool });
+const batteryMgr = new BatteryOptimizationManager(pool);
 
 app.use((req, res, next) => {
   const reqId = crypto.randomUUID();
@@ -158,6 +160,12 @@ app.post('/v1/ingest/sos', async (req, res) => {
       return res.status(409).json({ error: 'duplicate', msg_id: decoded.msgIdHex });
     }
 
+    // Track device battery state (using pubkey as device_id)
+    const deviceId = pubkey_b64;
+    if (decoded.batteryPct !== null && typeof decoded.batteryPct === 'number') {
+      void batteryMgr.updateDeviceBatteryState(deviceId, decoded.batteryPct, decoded.msgIdHex);
+    }
+
     await logger.info({
       event: 'sos_accepted',
       req_id: req.reqId,
@@ -209,6 +217,188 @@ app.get('/v1/sos/recent', async (req, res) => {
     res.json({ items: result.rows });
   } catch (err) {
     await logger.error({ event: 'recent_db_error', req_id: req.reqId, error: String(err) });
+    res.status(500).json({ error: 'db_error', details: String(err) });
+  }
+});
+
+// === Flutter/Mobile Device Battery Endpoints ===
+
+/**
+ * GET /v1/device/battery/:device_id
+ * 
+ * Return cloud's view of device battery state + recommendations.
+ * device_id is base64-encoded pubkey.
+ */
+app.get('/v1/device/battery/:device_id', async (req, res) => {
+  const { device_id } = req.params;
+
+  if (!device_id || typeof device_id !== 'string') {
+    return res.status(422).json({ error: 'invalid_device_id' });
+  }
+
+  try {
+    const state = await batteryMgr.getDeviceBatteryState(device_id);
+
+    if (!state) {
+      // Device has never sent an SOS; return default good state
+      return res.json({
+        device_id,
+        battery_pct: 100,
+        power_state: 'GOOD',
+        suppression_recommended: false,
+        retention_sec: 604800,
+        last_seen_ts: null,
+        config: batteryMgr.getOptimizationConfig('GOOD')
+      });
+    }
+
+    res.json({
+      device_id,
+      battery_pct: state.battery_pct,
+      power_state: state.power_state,
+      suppression_recommended: state.should_suppress_rebroadcast,
+      retention_sec: state.recommended_message_retention_sec,
+      last_seen_ts: state.last_seen_ts ? new Date(state.last_seen_ts).toISOString() : null,
+      config: batteryMgr.getOptimizationConfig(state.power_state)
+    });
+  } catch (err) {
+    await logger.error({
+      event: 'battery_state_error',
+      req_id: req.reqId,
+      device_id,
+      error: String(err)
+    });
+    res.status(500).json({ error: 'db_error', details: String(err) });
+  }
+});
+
+/**
+ * GET /v1/optimize/config
+ * 
+ * Return battery optimization config (for Flutter apps to apply locally).
+ * Optional query param: ?power_state=GOOD|MEDIUM|LOW|CRITICAL
+ */
+app.get('/v1/optimize/config', async (req, res) => {
+  const powerState = req.query.power_state ?? 'GOOD';
+
+  const validStates = ['GOOD', 'MEDIUM', 'LOW', 'CRITICAL'];
+  if (!validStates.includes(powerState)) {
+    return res.status(422).json({ error: 'invalid_power_state', valid_states: validStates });
+  }
+
+  try {
+    const config = batteryMgr.getOptimizationConfig(powerState);
+    res.json({
+      power_state: powerState,
+      config,
+      description: 'Battery optimization parameters for local device filtering and relay.'
+    });
+  } catch (err) {
+    await logger.error({
+      event: 'optimize_config_error',
+      req_id: req.reqId,
+      power_state: req.query.power_state,
+      error: String(err)
+    });
+    res.status(500).json({ error: 'error', details: String(err) });
+  }
+});
+
+/**
+ * GET /v1/stats/battery?device_id=...&hours=24
+ * 
+ * Return battery optimization stats for a device (analytics dashboard).
+ */
+app.get('/v1/stats/battery', async (req, res) => {
+  const deviceId = req.query.device_id;
+  const hoursBack = typeof req.query.hours === 'string' ? Number(req.query.hours) : 24;
+
+  if (!deviceId || typeof deviceId !== 'string') {
+    return res.status(422).json({ error: 'device_id is required' });
+  }
+
+  if (!Number.isFinite(hoursBack) || hoursBack < 1 || hoursBack > 720) {
+    return res.status(422).json({ error: 'hours must be 1-720' });
+  }
+
+  try {
+    const stats = await batteryMgr.getDeviceStats(deviceId, hoursBack);
+    res.json({
+      device_id: deviceId,
+      hours_back: hoursBack,
+      sample_count: stats.length,
+      stats
+    });
+  } catch (err) {
+    await logger.error({
+      event: 'battery_stats_error',
+      req_id: req.reqId,
+      device_id: deviceId,
+      hours: hoursBack,
+      error: String(err)
+    });
+    res.status(500).json({ error: 'db_error', details: String(err) });
+  }
+});
+
+/**
+ * GET /v1/admin/battery-status
+ * 
+ * Return network-wide battery status (ops dashboard).
+ */
+app.get('/v1/admin/battery-status', async (req, res) => {
+  try {
+    const status = await batteryMgr.getNetworkBatteryStatus();
+    res.json({
+      at: new Date().toISOString(),
+      status
+    });
+  } catch (err) {
+    await logger.error({
+      event: 'battery_status_error',
+      req_id: req.reqId,
+      error: String(err)
+    });
+    res.status(500).json({ error: 'db_error', details: String(err) });
+  }
+});
+
+/**
+ * POST /v1/stats/battery/record
+ * 
+ * Device sends battery stats to cloud for persistence + analytics.
+ * Body: { device_id, battery_pct, messages_suppressed, messages_forwarded, power_saved_pct }
+ */
+app.post('/v1/stats/battery/record', async (req, res) => {
+  const { device_id, battery_pct, messages_suppressed, messages_forwarded, power_saved_pct } = req.body ?? {};
+
+  if (!device_id || typeof battery_pct !== 'number') {
+    return res.status(422).json({ error: 'device_id and battery_pct are required' });
+  }
+
+  const msgSuppressed = typeof messages_suppressed === 'number' ? messages_suppressed : 0;
+  const msgForwarded = typeof messages_forwarded === 'number' ? messages_forwarded : 0;
+  const powerSaved = typeof power_saved_pct === 'number' ? power_saved_pct : 0;
+
+  try {
+    await batteryMgr.recordBatteryStats(device_id, battery_pct, msgSuppressed, msgForwarded, powerSaved);
+    await logger.info({
+      event: 'battery_stats_recorded',
+      req_id: req.reqId,
+      device_id,
+      battery_pct,
+      messages_suppressed: msgSuppressed,
+      messages_forwarded: msgForwarded,
+      power_saved_pct: powerSaved
+    });
+    res.json({ status: 'recorded' });
+  } catch (err) {
+    await logger.error({
+      event: 'battery_stats_record_error',
+      req_id: req.reqId,
+      device_id,
+      error: String(err)
+    });
     res.status(500).json({ error: 'db_error', details: String(err) });
   }
 });

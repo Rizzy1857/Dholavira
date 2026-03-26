@@ -12,7 +12,8 @@
     "db:migrate": "node scripts/migrate.mjs",
     "logs:show": "node scripts/show_logs.mjs",
     "proof": "node scripts/proof.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "allocate:example": "python3 src/allocation_example.py"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
