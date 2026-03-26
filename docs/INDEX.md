@@ -12,7 +12,7 @@ Welcome to ECHO/Adrishya documentation. Use this index to navigate all resources
 
 ### 🏗️ Architecture & Design
 
-- **[Modules Overview](modules/MODULES.md)** — Three-module architecture (communication, battery, allocation)
+- **[Modules Overview](modules/MODULES.md)** — Three-module architecture (communication, battery, DRI_CA)
 - **[Requirements](architecture/REQUIREMENTS.md)** — System dependencies & stack
 - **[Protocol Blueprint](../README.md#protocol-blueprint)** — SOS payload, identifiers, cryptography
 
@@ -30,10 +30,17 @@ Welcome to ECHO/Adrishya documentation. Use this index to navigate all resources
 - **[Battery Integration Status](battery/BATTERY_INTEGRATION_STATUS.md)** — Cloud + on-device battery tracking
 - **[Flutter Integration Guide](battery/FLUTTER_BATTERY_INTEGRATION.md)** — Mobile app implementation (Battery APIs, power states, integration patterns)
 
+### 🗺️ DRI_CA (Module 3)
+
+- **[DRI_CA API Guide](DRI_CA_SERVER.md)** — Feasibility, zones, remediation, alerts, and awareness APIs
+- **[DRI_CA Database Setup](DRI_CA_DATABASE.md)** — PostGIS database initialization for location + historic data
+
 ### 📖 Integration Guides
 
 - **[Integration Analysis](guides/INTEGRATION_ANALYSIS.md)** — Detailed allocation module analysis
 - **[Integration Guide](guides/INTEGRATION_GUIDE.md)** — Technical deep-dive (algorithms, architecture, deployment)
+- **[DRI_CA API Guide](DRI_CA_SERVER.md)** — Location intelligence + community awareness API integration
+- **[DRI_CA Database Setup](DRI_CA_DATABASE.md)** — Local PostGIS setup for DRI_CA module
 
 ## 🎯 By Use Case
 
@@ -113,6 +120,12 @@ fuzzy-spoon/
 ### Allocation v2 (Advanced - NEW)
 - `POST /v1/allocate/v2` — LP optimization (50-150ms, 20-30% improvement)
 - `POST /v1/allocate/compare` — Compare v1 vs v2 results
+
+### DRI_CA (Module 3)
+- `POST /api/v1/feasibility` — Location risk + historic disaster proximity
+- `GET /api/v1/zones/stats` — Hazard zone aggregates
+- `POST /api/v1/alerts` — Community alert creation
+- `GET /api/v1/tips/current` — Seasonal awareness guidance
 
 ## 📈 Key Metrics
 

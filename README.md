@@ -13,6 +13,7 @@ This repo is the **no-loss engineering blueprint** plus a **working reference ba
 **Quick links:**
 - **Getting started?** → [Quickstart Guide](docs/guides/quickstart.md)
 - **Backend questions?** → [Requirements & Architecture](docs/architecture/REQUIREMENTS.md)
+- **Location intelligence (Module 3)?** → [DRI_CA API Guide](docs/DRI_CA_SERVER.md)
 - **Resource allocation?** → [Allocation Docs](docs/allocation/)
 - **Mobile (Flutter)?** → [Battery Integration](docs/battery/)
 - **Production deployment?** → [Allocation v2 Status](docs/allocation/ALLOCATION_V2_STATUS.md)
@@ -77,7 +78,21 @@ Layers 1–3: BLE mesh → LoRa sentinels → vehicular DTN. See `MODULES.md`.
 
 See `FLUTTER_BATTERY_INTEGRATION.md` for full mobile integration guide.
 
-### 3. Resource allocation (supply routing)
+### 3. DRI_CA (location intelligence + community awareness)
+
+The **location-aware disaster intelligence module** is now integrated into the main backend:
+
+- **Location feasibility + historic proximity** using PostGIS (`POST /api/v1/feasibility`).
+- **Disaster-prone zone mapping** for flood, landslide, coastal, and seismic risk (`GET /api/v1/zones/*`).
+- **Community awareness workflows** with crowd alerts (`POST /api/v1/alerts`) and seasonal guidance (`GET /api/v1/tips/*`).
+- **Decision support UX** through simplification (`POST /api/v1/simplify`) and translation/TTS (`POST /api/v1/translate`).
+
+Primary files:
+- Routes: `backend/src/routes/{feasibility,zones,alerts,tips,remediation,simplify,translate}.js`
+- Services: `backend/src/services/{xaiEngine,seasonalTips,simplifier,bhashiniClient}.js`
+- Database seeds: `backend/db/{001,002,003,004}_*.sql`
+
+### Resource allocation (supply routing extension)
 
 **v1 (Legacy)**: Greedy tier-based algorithm for basic scenarios.  
 **v2 (Advanced, NEW)**: Linear Programming optimization with multi-scenario planning.
@@ -97,6 +112,23 @@ Both versions available concurrently:
 **Performance**: v2 reduces unmet demand by 20-30% vs v1. Suitable for complex disaster zones where supply optimization is critical.
 
 See `ALLOCATION_V2.md` for API reference, `ALLOCATION_MIGRATION.md` for gradual rollout plan.
+
+## Backend integration (all modules)
+
+The backend now includes modules 1–3 integrated as one service:
+
+```zsh
+cd backend
+npm install
+npm run dev
+```
+
+Server runs on `http://localhost:3000` (or port in `$PORT`). All endpoints available:
+- `/v1/ingest/sos` — SOS message ingestion (Module 1)
+- `/v1/device/battery/*` — Battery optimization (Module 2)
+- `/api/v1/feasibility`, `/api/v1/zones`, `/api/v1/alerts`, `/api/v1/tips` — Location intelligence (Module 3)
+
+For database initialization, see `backend/db/` and [Database Setup](docs/DRI_CA_DATABASE.md).
 
 ## Mobile (Flutter/Android) Integration
 

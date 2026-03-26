@@ -1,6 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
+import cors from 'cors';
+import helmet from 'helmet';
 
 import { createDbPool } from './db.mjs';
 import { parseSosPayloadV1 } from './sosPayloadV1.mjs';
@@ -9,10 +11,35 @@ import { createLogger } from './logger.mjs';
 import { BatteryOptimizationManager } from './batteryManager.mjs';
 import allocationV2 from './allocationWrapper.mjs';
 
+// Module 3: DRI_CA Routes
+import feasibilityRouter from './routes/feasibility.js';
+import zonesRouter from './routes/zones.js';
+import remediationRouter from './routes/remediation.js';
+import simplifyRouter from './routes/simplify.js';
+import translateRouter from './routes/translate.js';
+import alertsRouter from './routes/alerts.js';
+import tipsRouter from './routes/tips.js';
+
 dotenv.config();
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
+
+// CORS support for DRI_CA client
+const corsOrigins = (process.env.CORS_ORIGIN || 'http://localhost:3000,http://localhost:4000')
+  .split(',')
+  .map((o) => o.trim());
+
+app.use(cors({
+  origin: corsOrigins,
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
 
 const pool = createDbPool();
 const logger = createLogger({ pool });
@@ -535,6 +562,17 @@ app.post('/v1/allocate/compare', async (req, res) => {
     });
   }
 });
+
+// ============================================================
+// Module 3: DRI_CA Routes (Location Intelligence + Community Awareness)
+// ============================================================
+app.use('/api/v1/feasibility', feasibilityRouter);
+app.use('/api/v1/zones', zonesRouter);
+app.use('/api/v1/remediation', remediationRouter);
+app.use('/api/v1/simplify', simplifyRouter);
+app.use('/api/v1/translate', translateRouter);
+app.use('/api/v1/alerts', alertsRouter);
+app.use('/api/v1/tips', tipsRouter);
 
 const port = Number(process.env.PORT ?? 3000);
 app.listen(port, () => {

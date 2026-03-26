@@ -20,8 +20,14 @@
 
 - [Quickstart Guide](guides/quickstart.md) — Local setup (5 min)
 - [Integration Guide](guides/INTEGRATION_GUIDE.md) — Detailed API integration
-- [System Architecture](modules/MODULES.md) — Three-module overview
+- [System Architecture](modules/MODULES.md) — Three-module overview (Communication, Battery, DRI_CA)
 - [Requirements](architecture/REQUIREMENTS.md) — Stack & dependencies
+- [DRI_CA Server API](DRI_CA_SERVER.md) — Location intelligence + community awareness endpoints
+
+### 🗺️ Location Intelligence / Community Awareness (Module 3)
+
+- [DRI_CA API Guide](DRI_CA_SERVER.md) — Feasibility, zones, alerts, tips, remediation, simplify, translate
+- [DRI_CA Database Setup](DRI_CA_DATABASE.md) — PostGIS schema initialization
 
 ### 📊 Resource Allocation Planner
 
@@ -72,7 +78,7 @@
 
 1 document on system design:
 
-- `MODULES.md` — Three-module architecture (DTN, battery, allocation)
+- `MODULES.md` — Three-module architecture (DTN, battery, DRI_CA location intelligence)
 
 ### `/architecture` — System Design
 
@@ -110,6 +116,8 @@
 - **Allocation v2:** `POST /v1/allocate/v2` (advanced, 50-150ms, 20-30% better)
 - **Compare:** `POST /v1/allocate/compare` (v1 vs v2 results)
 - **Battery:** `/v1/device/battery/:device_id` (see Flutter guide)
+- **DRI_CA Feasibility:** `POST /api/v1/feasibility` (location risk + historic data)
+- **Community Alerts:** `POST /api/v1/alerts` and `GET /api/v1/alerts`
 
 ### Quick References
 

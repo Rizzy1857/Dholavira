@@ -4,7 +4,7 @@ Three-part stack for **battery-aware, delay-tolerant disaster communications**:
 
 1. **Communication** — BLE/LoRa/Wi-Fi Direct mesh + store-and-forward + RSSI suppression.
 2. **Battery Optimization** — power-aware message filtering, LoRa CAD duty cycling, cloud-side node prioritization.
-3. **Resource Allocation** — scenario-based supply routing (warehouses → hospitals), robust margins, HITL overrides.
+3. **DRI_CA Location Intelligence** — location-based hazard feasibility, historic disaster proximity, and community awareness workflows.
 
 ## 1. Communication Layer
 
@@ -91,110 +91,70 @@ cost = cloud_triage.route_energy_cost("route_1", node_battery_map)
 
 The cloud knows device battery state (sent in SOS or separate heartbeat); it deprioritizes nodes at risk, avoiding routing critical supplies through them.
 
-## 3. Resource Allocation Layer
+## 3. DRI_CA Location Intelligence + Community Awareness Layer
 
-**Purpose**: Post-ingest triage—optimize supply routing to maximize coverage under constraints.
+**Purpose**: Convert location input into actionable risk context and citizen-facing awareness outputs.
 
-**Files**: `backend/src/disaster_alloc.py`, `backend/src/allocation_example.py`
+**Files**:
 
-### Model
+- `backend/src/routes/feasibility.js`
+- `backend/src/routes/zones.js`
+- `backend/src/routes/alerts.js`
+- `backend/src/routes/tips.js`
+- `backend/src/routes/simplify.js`
+- `backend/src/routes/translate.js`
+- `backend/src/routes/remediation.js`
 
-**Nodes**: warehouses, distribution hubs, hospitals, shelters (each has supply/demand/priority/tier).
+### Capabilities
 
-**Edges**: routes with capacity, vehicle types (truck/bike/drone), degradation factors (weather/damage).
+- **Location feasibility**: checks flood, landslide, coastal, and seismic overlap for a coordinate.
+- **Historic proximity**: finds nearby historic disaster events around the queried location.
+- **Community alerts**: supports local incident reporting and verification workflows.
+- **Awareness delivery**: publishes seasonal preparedness tips and simplified multilingual guidance.
 
-**Scenarios**: outages, demand spikes, road closures, weather impact.
+### Core APIs
 
-### Run allocation
+- `POST /api/v1/feasibility` — location risk + historic proximity output.
+- `GET /api/v1/zones/*` — hazard zone GeoJSON + stats.
+- `POST /api/v1/alerts` and `GET /api/v1/alerts` — create/list community alerts.
+- `GET /api/v1/tips/current` — current seasonal guidance.
 
-```python
-from backend.src.disaster_alloc import DynamicGraph, Node, Edge, Scenario, DisasterResourceAllocator
-
-g = DynamicGraph()
-g.add_node(Node("warehouse_1", role="warehouse", tier=1, supply=500))
-g.add_node(Node("hospital_1", role="hospital", tier=3, demand=200, priority=3.0))
-g.add_edge(Edge("route_1", "warehouse_1", "hospital_1", base_capacity=300))
-
-scenarios = [
-    Scenario("baseline", demand_mult=1.0),
-    Scenario("road_damage", demand_mult=1.2, route_impact={"route_1": False})
-]
-
-allocator = DisasterResourceAllocator(g)
-result = allocator.run(scenarios, mode="static")
-
-# Result:
-# - flows: [{from, to, edge, qty, vehicle, time}, ...]
-# - active_nodes: list of operational facilities
-# - critical_routes: list of usable corridors
-# - unmet_demand: shortfalls per scenario
-# - robust_margin: extra stock to pre-position for worst-case
-# - explanations: why each decision (transparency for operators)
-```
-
-### HITL overrides
-
-Operators can force decisions:
-
-```python
-hitl = {
-    "weights": {"hospital_1": 4.0},    # boost priority
-    "force_node": {"hub_2": True},      # keep open
-    "force_route": {"route_3": False}   # close route
-}
-result = allocator.run(scenarios, mode="static", hitl_overrides=hitl)
-```
-
-## Integration: Communication + Battery + Allocation
+## Integration: Communication + Battery + DRI_CA
 
 ### Typical flow
 
-1. **Phone user in disaster zone** → taps "SOS" → signed payload with `battery_pct` field.
-2. **Phone's BatteryOptimizer** → checks battery + priority; if <5%, only forwards if emergency.
-3. **ESP32 sentinel** receives via BLE → runs BatteryOptimizer + LoRa CAD; relays to cloud with RSSI metadata.
-4. **Vehicle mule** (LoRa + storage) → holds packets, bulk-dumps when internet returns.
-5. **Cloud backend** (`/v1/ingest/sos`) → verifies signature, stores in PostGIS, logs event.
-6. **CloudBatteryAwareTriage** → marks ESP32 as low-battery based on battery_pct in SOS.
-7. **DisasterResourceAllocator** → builds network from SOS locations + known hubs; runs allocation.
-   - Deprioritizes low-battery nodes in routing.
-   - Computes supply routing: warehouse → hub → hospital.
-   - Outputs robust margin (pre-position stock to handle worst-case outages).
-8. **Operator dashboard** → shows flows, critical routes, explanations, robust margins.
+1. **Phone user in disaster zone** sends SOS with location and battery.
+2. **Mesh + LoRa path** forwards the message to the cloud ingest endpoint.
+3. **Core backend** validates and persists incoming disaster telemetry.
+4. **DRI_CA feasibility service** evaluates location hazard overlap and historic event proximity.
+5. **Community module** publishes/filters localized alerts and awareness tips for that district.
+6. **Language support** simplifies and translates critical advisories for wider accessibility.
 
 ### Real-world scenario
 
-**Earthquake in rural area:**
+**Flood rise near Aluva:**
 
-- SOS from phone (battery 12%) → ESP32 relays (battery 8%) → vehicle mule.
-- Vehicle Internet returns → posts 500 SOS messages to cloud.
-- **Cloud allocation** sees:
-  - Hospital_A: demand 100, priority 3.0.
-  - Hospital_B: demand 150, priority 2.5.
-  - Warehouse_1: supply 200, good road.
-  - Warehouse_2: supply 180, road damaged (1.2x demand spike in scenario).
-  - ESP32_A: battery 8% → route weight 0.2x.
-- **Allocator outputs**:
-  - Flow: Warehouse_1 → Hospital_A (100 units).
-  - Flow: Warehouse_1 → Warehouse_2 → Hospital_B (100 units, multi-hop to avoid low-battery ESP32_A).
-  - Robust margin: Hospital_A +20 units, Hospital_B +30 units (worst-case buffer).
-- **Dashboard**: operator sees "Critical: Hospital_B unmet 20 units in damage scenario; pre-position 30 for margin."
+- Residents report water rise through `/api/v1/alerts`.
+- Coordinator runs `/api/v1/feasibility` for nearby shelters and roads.
+- API returns flood-risk hits and nearby historic flood incidents.
+- Verified alerts + seasonal monsoon tips are pushed in simplified local language.
 
 ## Modules summary
 
 | Module | File | Purpose | Input | Output |
 | --- | --- | --- | --- | --- |
-| Communication | README.md (Layers 1–3) | BLE/LoRa mesh relay | Phone SOS | Packets relayed Layer 1→4 |
-| Battery Opt | `battery_optimization.py` | Power-aware filtering + duty cycling | Battery %, priority, RSSI | Forward decision, retention time, CAD cycle |
-| Resource Alloc | `disaster_alloc.py` | Supply routing + margins | Network, scenarios, HITL | Flows, margins, explanations |
+| Communication | `README.md` (Layers 1–3) | BLE/LoRa mesh relay | Phone SOS | Packets relayed Layer 1→4 |
+| Battery Opt | `backend/src/battery_optimization.py` | Power-aware filtering + duty cycling | Battery %, priority, RSSI | Forward decision, retention time, CAD cycle |
+| DRI_CA | `backend/src/routes/*.js` + `backend/src/services/*.js` | Location risk, historic proximity, awareness | Coordinates, district, alert input | Risk profile, historic events, localized alerts/tips |
 
 ## Deployment checklist
 
-- [ ] Phone SDK: battery-aware BLE advertise (battery field in payload).
-- [ ] ESP32 firmware: BatteryOptimizer + LoRa CAD duty cycling.
-- [ ] Cloud backend: `/v1/ingest/sos` stores battery_pct; CloudBatteryAwareTriage updates state.
-- [ ] Resource allocator: builds network from SOS locations; runs allocation on ingest/schedule.
-- [ ] Dashboard: shows flows, robust margins, battery state, explanations.
+- [ ] Phone/edge path is sending validated location + battery metadata.
+- [ ] Core backend ingest (`/v1/ingest/sos`) is healthy and storing telemetry.
+- [ ] DRI_CA database seeds (`DRI_CA/database/init/*.sql`) are loaded.
+- [ ] DRI_CA APIs (`/api/v1/feasibility`, `/api/v1/alerts`, `/api/v1/tips`) return expected data.
+- [ ] Operator/client view consumes DRI_CA outputs for local awareness updates.
 
 ---
 
-See `ALLOCATION.md`, `quickstart.md`, `README.md` for detailed docs.
+See `backend/README.md`, `docs/DRI_CA_SERVER.md`, `quickstart.md`, and `README.md` for detailed integration steps.
