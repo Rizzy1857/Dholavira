@@ -1,6 +1,8 @@
 import express from 'express';
 import dotenv from 'dotenv';
 import crypto from 'node:crypto';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import cors from 'cors';
 import helmet from 'helmet';
 
@@ -19,8 +21,20 @@ import simplifyRouter from './routes/simplify.js';
 import translateRouter from './routes/translate.js';
 import alertsRouter from './routes/alerts.js';
 import tipsRouter from './routes/tips.js';
+import { applyTerrainAwareRisk, resolveKeralaTerrainProfile } from './services/keralaTerrainProfiles.mjs';
+import { resolveRemediationRules } from './services/remediationRules.mjs';
+import {
+  buildSafeKnowledge,
+  getEnrichedTips,
+  getKsdmaReferenceBundle,
+  getTerrainMapProfiles,
+} from './services/ksdmaKnowledge.mjs';
 
 dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.resolve(__dirname, '../public');
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
@@ -41,9 +55,57 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
+app.use(express.static(publicDir));
+
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(publicDir, 'index.html'));
+});
+
 const pool = createDbPool();
 const logger = createLogger({ pool });
 const batteryMgr = new BatteryOptimizationManager(pool);
+const inMemoryPanicSos = [];
+
+function buildHeuristicRisk(lat, lon, buildingType = 'residential') {
+  const coastalBias = lon > 75.5 ? 0.15 : 0.05;
+  const hillBias = lat > 10.8 ? 0.15 : 0.05;
+  const flood = Math.max(0.05, Math.min(0.85, 0.25 + coastalBias));
+  const landslide = Math.max(0.05, Math.min(0.85, 0.20 + hillBias));
+  const cyclone = Math.max(0.05, Math.min(0.85, 0.18 + coastalBias));
+
+  return {
+    latitude: lat,
+    longitude: lon,
+    flood_risk: Number(flood.toFixed(3)),
+    landslide_risk: Number(landslide.toFixed(3)),
+    cyclone_risk: Number(cyclone.toFixed(3)),
+    building_type: buildingType,
+    factors: {
+      flood: 'Fallback mode: estimated from coarse regional profile',
+      landslide: 'Fallback mode: estimated from coarse regional profile',
+      cyclone: 'Fallback mode: estimated from coarse regional profile',
+    },
+    metadata: {
+      fallback: true,
+      source: 'backend-heuristic',
+      timestamp: new Date().toISOString(),
+    },
+    cached: false,
+  };
+}
+
+async function applyKeralaTerrainProfile(baseData, lat, lon, buildingType) {
+  const { profile, source } = await resolveKeralaTerrainProfile(pool, lat, lon);
+  if (!profile) return baseData;
+
+  const adjusted = applyTerrainAwareRisk(baseData, profile, buildingType);
+  adjusted.metadata = {
+    ...(adjusted.metadata ?? {}),
+    kerala_profile_source: source,
+    kerala_profile_applied: true,
+  };
+  return adjusted;
+}
 
 app.use((req, res, next) => {
   const reqId = crypto.randomUUID();
@@ -219,6 +281,99 @@ app.post('/v1/ingest/sos', async (req, res) => {
   }
 });
 
+app.post('/v1/sos/panic', async (req, res) => {
+  const lat = Number(req.body?.lat ?? 10.8505);
+  const lon = Number(req.body?.lon ?? 76.2711);
+  const emergencyCode = Number(req.body?.emergency_code ?? 1);
+  const gatewayId = typeof req.body?.gateway_id === 'string' ? req.body.gateway_id : 'citizen-app';
+  const batteryPct = Number(req.body?.battery_pct ?? 50);
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(422).json({ error: 'invalid_coordinates', details: 'lat/lon must be numeric' });
+  }
+
+  const msgIdHex = crypto.randomBytes(16).toString('hex');
+  const tsUnixMs = Date.now();
+  const latE7 = Math.round(lat * 1e7);
+  const lonE7 = Math.round(lon * 1e7);
+  const payload = Buffer.from(`PANIC|${msgIdHex}|${tsUnixMs}|${lat}|${lon}`, 'utf8');
+  const pubkey = crypto.randomBytes(32);
+  const signature = crypto.randomBytes(64);
+
+  try {
+    await pool.query(
+      `INSERT INTO sos_messages (
+        msg_id_hex, version, ts_unix_ms, lat_e7, lon_e7, accuracy_m, battery_pct, emergency_code, flags, ttl_hops,
+        pubkey, signature, payload, gateway_id, rssi, received_at
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,
+        $11,$12,$13,$14,$15,$16
+      )`,
+      [
+        msgIdHex,
+        1,
+        tsUnixMs,
+        latE7,
+        lonE7,
+        null,
+        Math.max(0, Math.min(100, Math.round(batteryPct))),
+        Math.max(0, Math.min(32767, Math.round(emergencyCode))),
+        0,
+        0,
+        pubkey,
+        signature,
+        payload,
+        gatewayId,
+        null,
+        new Date(tsUnixMs),
+      ]
+    );
+
+    await logger.warn({
+      event: 'civilian_panic_sos',
+      req_id: req.reqId,
+      msg_id: msgIdHex,
+      lat_e7: latE7,
+      lon_e7: lonE7,
+      gateway_id: gatewayId,
+    });
+
+    return res.json({
+      status: 'accepted',
+      mode: 'panic',
+      msg_id: msgIdHex,
+      ts_unix_ms: tsUnixMs,
+      lat,
+      lon,
+    });
+  } catch (err) {
+    await logger.error({ event: 'panic_sos_db_error', req_id: req.reqId, error: String(err) });
+
+    const fallbackItem = {
+      msg_id_hex: msgIdHex,
+      ts_unix_ms: tsUnixMs,
+      lat_e7: latE7,
+      lon_e7: lonE7,
+      battery_pct: Math.max(0, Math.min(100, Math.round(batteryPct))),
+      emergency_code: Math.max(0, Math.min(32767, Math.round(emergencyCode))),
+      gateway_id: gatewayId,
+      received_at_unix_ms: tsUnixMs,
+    };
+    inMemoryPanicSos.unshift(fallbackItem);
+    if (inMemoryPanicSos.length > 500) inMemoryPanicSos.pop();
+
+    return res.json({
+      status: 'accepted',
+      mode: 'panic_memory',
+      msg_id: msgIdHex,
+      ts_unix_ms: tsUnixMs,
+      lat,
+      lon,
+      warning: 'Stored in memory because database is unavailable',
+    });
+  }
+});
+
 app.get('/v1/sos/recent', async (req, res) => {
   const since = typeof req.query.since === 'string' ? Number(req.query.since) : null;
   const sinceMs = Number.isFinite(since) ? since : null;
@@ -248,7 +403,7 @@ app.get('/v1/sos/recent', async (req, res) => {
     res.json({ items: result.rows });
   } catch (err) {
     await logger.error({ event: 'recent_db_error', req_id: req.reqId, error: String(err) });
-    res.status(500).json({ error: 'db_error', details: String(err) });
+    res.json({ items: inMemoryPanicSos });
   }
 });
 
@@ -566,6 +721,247 @@ app.post('/v1/allocate/compare', async (req, res) => {
 // ============================================================
 // Module 3: DRI_CA Routes (Location Intelligence + Community Awareness)
 // ============================================================
+app.post('/api/v1/ai/risk-assessment', async (req, res) => {
+  const lat = Number(req.body?.lat);
+  const lon = Number(req.body?.lon);
+  const buildingType = typeof req.body?.building_type === 'string' ? req.body.building_type : 'residential';
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(422).json({ error: { message: 'lat and lon are required numeric values' } });
+  }
+
+  try {
+    const aiBaseUrl = process.env.PYTHON_AI_URL || 'http://127.0.0.1:5001';
+    const response = await fetch(`${aiBaseUrl}/risk-assessment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        lat,
+        lon,
+        building_type: buildingType,
+      }),
+    });
+
+    const raw = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await logger.warn({
+        event: 'ai_risk_proxy_error',
+        req_id: req.reqId,
+        status: response.status,
+        details: raw,
+      });
+      return res.status(response.status).json(raw);
+    }
+
+    const rawData = raw?.data ?? raw;
+    const data = await applyKeralaTerrainProfile(rawData, lat, lon, buildingType);
+    return res.json({ success: true, data });
+  } catch (err) {
+    await logger.error({ event: 'ai_risk_proxy_exception', req_id: req.reqId, error: String(err) });
+    const heuristic = buildHeuristicRisk(lat, lon, buildingType);
+    const data = await applyKeralaTerrainProfile(heuristic, lat, lon, buildingType);
+    return res.json({ success: true, data });
+  }
+});
+
+app.post('/api/v1/ai/remediation', async (req, res) => {
+  const body = req.body ?? {};
+  const payload = {
+    building_type: typeof body.building_type === 'string' ? body.building_type : 'residential',
+    flood_risk: Number.isFinite(Number(body.flood_risk)) ? Number(body.flood_risk) : 0.2,
+    landslide_risk: Number.isFinite(Number(body.landslide_risk)) ? Number(body.landslide_risk) : 0.2,
+    cyclone_risk: Number.isFinite(Number(body.cyclone_risk)) ? Number(body.cyclone_risk) : 0.2,
+  };
+
+  try {
+    const dbRules = await resolveRemediationRules(pool, payload);
+
+    const aiBaseUrl = process.env.PYTHON_AI_URL || 'http://127.0.0.1:5001';
+    const response = await fetch(`${aiBaseUrl}/remediation`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    const raw = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      await logger.warn({
+        event: 'ai_remediation_proxy_error',
+        req_id: req.reqId,
+        status: response.status,
+        details: raw,
+      });
+      return res.status(response.status).json(raw);
+    }
+
+    const aiData = raw?.data ?? raw;
+    const aiRecommendations = Array.isArray(aiData?.recommendations) ? aiData.recommendations : [];
+    const data = {
+      ...aiData,
+      building_type: payload.building_type,
+      risk_combo: dbRules.combo,
+      hazard_rule_recommendations: dbRules.recommendations,
+      recommendations: [...dbRules.recommendations, ...aiRecommendations],
+      metadata: {
+        ...(aiData?.metadata ?? {}),
+        remediation_rule_source: dbRules.source,
+        matched_rule_count: dbRules.recommendations.length,
+      },
+    };
+
+    if (typeof data.summary === 'string' && data.summary.length > 0) {
+      data.summary = `${data.summary} | Rule engine combo: ${dbRules.combo.key}`;
+    } else {
+      data.summary = `Remediation based on combo ${dbRules.combo.key} for ${payload.building_type.toUpperCase()}.`;
+    }
+
+    return res.json({ success: true, data });
+  } catch (err) {
+    await logger.error({ event: 'ai_remediation_proxy_exception', req_id: req.reqId, error: String(err) });
+    const dbRules = await resolveRemediationRules(pool, payload);
+    const maxRisk = Math.max(payload.flood_risk, payload.landslide_risk, payload.cyclone_risk);
+    const overall = maxRisk >= 0.6 ? 'high' : maxRisk >= 0.3 ? 'moderate' : 'low';
+    const fallback = {
+      summary: `Fallback remediation for ${payload.building_type.toUpperCase()} (${overall.toUpperCase()} risk).`,
+      overall_severity: overall,
+      building_type: payload.building_type,
+      risk_combo: dbRules.combo,
+      hazard_rule_recommendations: dbRules.recommendations,
+      recommendations: dbRules.recommendations,
+      risk_breakdown: {
+        flood: { score: payload.flood_risk, category: payload.flood_risk >= 0.6 ? 'high' : payload.flood_risk >= 0.3 ? 'moderate' : 'low' },
+        landslide: { score: payload.landslide_risk, category: payload.landslide_risk >= 0.6 ? 'high' : payload.landslide_risk >= 0.3 ? 'moderate' : 'low' },
+        cyclone: { score: payload.cyclone_risk, category: payload.cyclone_risk >= 0.6 ? 'high' : payload.cyclone_risk >= 0.3 ? 'moderate' : 'low' },
+      },
+      metadata: {
+        fallback: true,
+        source: 'backend-remediation-rule-engine',
+        remediation_rule_source: dbRules.source,
+        matched_rule_count: dbRules.recommendations.length,
+        timestamp: new Date().toISOString(),
+      },
+    };
+    return res.json({ success: true, data: fallback });
+  }
+});
+
+app.get('/api/v1/knowledge/sectors', (_req, res) => {
+  return res.json({ success: true, data: getKsdmaReferenceBundle() });
+});
+
+app.get('/api/v1/knowledge/map-profiles', (_req, res) => {
+  return res.json({
+    success: true,
+    data: {
+      profiles: getTerrainMapProfiles(),
+      sources: getKsdmaReferenceBundle().sources,
+    },
+  });
+});
+
+app.get('/api/v1/knowledge/build-safe', async (req, res) => {
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+  const buildingType = typeof req.query.building_type === 'string' ? req.query.building_type : 'residential';
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return res.status(422).json({ error: { message: 'lat and lon query params are required numeric values' } });
+  }
+
+  let riskData = null;
+  try {
+    const aiBaseUrl = process.env.PYTHON_AI_URL || 'http://127.0.0.1:5001';
+    const response = await fetch(`${aiBaseUrl}/risk-assessment`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lon, building_type: buildingType }),
+    });
+    const raw = await response.json().catch(() => ({}));
+    if (response.ok) {
+      riskData = raw?.data ?? raw;
+    }
+  } catch {
+    // fallback below
+  }
+
+  if (!riskData) {
+    riskData = buildHeuristicRisk(lat, lon, buildingType);
+  }
+
+  const adjustedRisk = await applyKeralaTerrainProfile(riskData, lat, lon, buildingType);
+  const { profile } = await resolveKeralaTerrainProfile(pool, lat, lon);
+
+  return res.json({
+    success: true,
+    data: {
+      risk: adjustedRisk,
+      knowledge: buildSafeKnowledge({ terrainProfile: profile, buildingType, riskData: adjustedRisk }),
+    },
+  });
+});
+
+app.get('/api/v1/knowledge/tips/current', async (req, res) => {
+  const season = typeof req.query.season === 'string' ? req.query.season : null;
+  const buildingType = typeof req.query.building_type === 'string' ? req.query.building_type : 'residential';
+  const lat = Number(req.query.lat);
+  const lon = Number(req.query.lon);
+
+  let riskData = {
+    flood_risk: 0.35,
+    landslide_risk: 0.35,
+    cyclone_risk: 0.3,
+    building_type: buildingType,
+  };
+
+  if (Number.isFinite(lat) && Number.isFinite(lon)) {
+    try {
+      const aiBaseUrl = process.env.PYTHON_AI_URL || 'http://127.0.0.1:5001';
+      const response = await fetch(`${aiBaseUrl}/risk-assessment`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat, lon, building_type: buildingType }),
+      });
+      const raw = await response.json().catch(() => ({}));
+      if (response.ok) {
+        riskData = raw?.data ?? raw;
+      } else {
+        riskData = buildHeuristicRisk(lat, lon, buildingType);
+      }
+      riskData = await applyKeralaTerrainProfile(riskData, lat, lon, buildingType);
+    } catch {
+      riskData = await applyKeralaTerrainProfile(buildHeuristicRisk(lat, lon, buildingType), lat, lon, buildingType);
+    }
+  }
+
+  return res.json({
+    success: true,
+    data: getEnrichedTips({ season, riskData }),
+  });
+});
+
+app.get('/api/v1/ai/healthz', async (req, res) => {
+  try {
+    const aiBaseUrl = process.env.PYTHON_AI_URL || 'http://127.0.0.1:5001';
+    const response = await fetch(`${aiBaseUrl}/healthz`);
+    const raw = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      await logger.warn({
+        event: 'ai_health_proxy_error',
+        req_id: req.reqId,
+        status: response.status,
+        details: raw,
+      });
+      return res.status(response.status).json({ success: false, data: raw });
+    }
+
+    return res.json({ success: true, data: raw });
+  } catch (err) {
+    await logger.error({ event: 'ai_health_proxy_exception', req_id: req.reqId, error: String(err) });
+    return res.status(503).json({ success: false, error: { message: 'AI service unavailable' } });
+  }
+});
+
 app.use('/api/v1/feasibility', feasibilityRouter);
 app.use('/api/v1/zones', zonesRouter);
 app.use('/api/v1/remediation', remediationRouter);

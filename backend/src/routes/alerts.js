@@ -125,7 +125,15 @@ router.get('/', async (req, res, next) => {
       filters: { type: type || 'all', district: district || 'all', severity: severity || 'all' },
     });
   } catch (err) {
-    if (err.message && err.message.includes('ECONNREFUSED')) {
+    const msg = err?.message ? String(err.message) : '';
+    const isDbUnavailable =
+      msg.includes('ECONNREFUSED') ||
+      msg.includes('SASL') ||
+      msg.includes('client password must be a string') ||
+      msg.includes('password authentication failed') ||
+      msg.includes('no pg_hba.conf entry');
+
+    if (isDbUnavailable) {
       logger.warn(TAG, 'Database is down! Serving mock alerts for demo mode.');
       return response.success(res, [
         {

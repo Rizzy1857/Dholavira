@@ -118,7 +118,7 @@ class _TipsScreenState extends State<TipsScreen> {
           ),
         ).animate().slideY(begin: -0.2).fade(),
         const SizedBox(height: 32),
-        Text('ACTIONABLE TIPS', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+        Text('SURVIVAL CHECKLIST', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
         const SizedBox(height: 16),
         ...tips.map((tipMap) {
           final tip = tipMap as Map<String, dynamic>;
@@ -133,7 +133,7 @@ class _TipsScreenState extends State<TipsScreen> {
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Icon(Icons.check_box_outlined, color: AppTheme.primary),
+                  const Icon(Icons.check_box_outlined, color: AppTheme.primary, size: 20),
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(

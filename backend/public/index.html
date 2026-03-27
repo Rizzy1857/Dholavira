@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dholavira Disaster Web Console</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>Dholavira Disaster Console</h1>
+        <p class="subtitle">Web-first operational dashboard</p>
+      </div>
+      <div class="status-wrap">
+        <span id="backendStatus" class="chip chip-warn">Backend: checking...</span>
+        <span id="aiStatus" class="chip chip-warn">AI: checking...</span>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="sos">SOS</button>
+      <button class="tab" data-tab="build-safe">Build Safe</button>
+      <button class="tab" data-tab="alerts">Alerts</button>
+      <button class="tab" data-tab="tips">Tips</button>
+      <button class="tab" data-tab="ai-view">AI View</button>
+    </nav>
+
+    <main>
+      <section id="sos" class="panel active">
+        <h2>Emergency SOS</h2>
+        <div class="grid two">
+          <div class="card">
+            <h3>Trigger Panic SOS</h3>
+            <div class="row">
+              <label>Latitude <input id="sosLat" type="number" step="0.000001" value="10.8505" /></label>
+              <label>Longitude <input id="sosLon" type="number" step="0.000001" value="76.2711" /></label>
+            </div>
+            <div class="row actions">
+              <button id="useMyLocationBtn">Use My Location</button>
+              <button id="sendSosBtn" class="primary">Send SOS</button>
+            </div>
+            <pre id="sosResult" class="output">Ready.</pre>
+          </div>
+          <div class="card">
+            <h3>Recent SOS Messages</h3>
+            <div class="row actions">
+              <button id="refreshSosBtn">Refresh</button>
+            </div>
+            <div id="recentSos" class="list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="build-safe" class="panel">
+        <h2>Build Safe Risk Assessment</h2>
+        <div class="card">
+          <h3>Map (click to choose location)</h3>
+          <div id="buildSafeMap" class="map-box"></div>
+        </div>
+        <br />
+        <div class="grid two">
+          <div class="card">
+            <h3>Location & Building Type</h3>
+            <div class="row">
+              <label>Latitude <input id="riskLat" type="number" step="0.000001" value="10.8505" /></label>
+              <label>Longitude <input id="riskLon" type="number" step="0.000001" value="76.2711" /></label>
+            </div>
+            <label>Building Type
+              <select id="buildingType">
+                <option>residential</option>
+                <option>commercial</option>
+                <option>industrial</option>
+                <option>institutional</option>
+                <option>agricultural</option>
+              </select>
+            </label>
+            <div class="row actions">
+              <button id="riskMyLocationBtn">Use My Location</button>
+              <button id="assessRiskBtn" class="primary">Assess Risk</button>
+            </div>
+            <div id="riskSummary" class="summary">No assessment yet.</div>
+          </div>
+          <div class="card">
+            <h3>Risk Breakdown & Remediation</h3>
+            <div id="riskBreakdown"></div>
+            <div id="buildSafeKnowledge" class="list"></div>
+            <div class="row actions">
+              <button id="getRemediationBtn">Generate Remediation</button>
+            </div>
+            <div id="remediation" class="list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="alerts" class="panel">
+        <h2>Community Alerts</h2>
+        <div class="card">
+          <h3>Official Warning Channels</h3>
+          <div id="officialChannels" class="list"></div>
+        </div>
+        <br />
+        <div class="grid two">
+          <div class="card">
+            <h3>Active Alerts</h3>
+            <div class="row actions">
+              <button id="refreshAlertsBtn">Refresh</button>
+            </div>
+            <div id="alertsList" class="list"></div>
+          </div>
+          <div class="card">
+            <h3>Create Alert</h3>
+            <label>Title <input id="alertTitle" type="text" /></label>
+            <label>Description <textarea id="alertDescription" rows="4"></textarea></label>
+            <div class="row">
+              <label>Type
+                <select id="alertType">
+                  <option>flood</option>
+                  <option>landslide</option>
+                  <option>heavy_rain</option>
+                  <option>cyclone</option>
+                  <option>road_block</option>
+                  <option>evacuation</option>
+                  <option>relief_camp</option>
+                  <option>general</option>
+                </select>
+              </label>
+              <label>Severity
+                <select id="alertSeverity">
+                  <option>info</option>
+                  <option>advisory</option>
+                  <option selected>warning</option>
+                  <option>critical</option>
+                </select>
+              </label>
+            </div>
+            <label>District <input id="alertDistrict" type="text" value="Ernakulam" /></label>
+            <div class="row actions">
+              <button id="createAlertBtn" class="primary">Submit Alert</button>
+            </div>
+            <pre id="createAlertResult" class="output">Ready.</pre>
+          </div>
+        </div>
+      </section>
+
+      <section id="tips" class="panel">
+        <h2>Seasonal Safety Tips</h2>
+        <div class="card">
+          <div class="row actions">
+            <button id="refreshTipsBtn">Refresh</button>
+            <button id="resetTipsProgressBtn">Reset Progress</button>
+          </div>
+          <div class="row">
+            <label>Search
+              <input id="tipsSearchInput" type="text" placeholder="Search by title/description" />
+            </label>
+            <label>Priority
+              <select id="tipsPriorityFilter">
+                <option value="all">All</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+          </div>
+          <div id="tipsProgress" class="summary">Progress: 0%</div>
+          <div id="tipsContainer" class="list"></div>
+        </div>
+      </section>
+
+      <section id="ai-view" class="panel">
+        <h2>AI Web Module</h2>
+        <div class="card">
+          <div class="row actions">
+            <button id="reloadAiFrameBtn">Reload</button>
+            <a id="openAiNewTab" class="link-btn" target="_blank" rel="noreferrer">Open in new tab</a>
+          </div>
+          <iframe id="aiFrame" title="AI Web View" class="ai-frame"></iframe>
+        </div>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      crossorigin=""
+    ></script>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

@@ -16,6 +16,23 @@ class _AlertsScreenState extends State<AlertsScreen> {
   bool _isLoading = true;
   String? _error;
 
+  static const List<String> _keralaDistricts = [
+    'Thiruvananthapuram',
+    'Kollam',
+    'Pathanamthitta',
+    'Alappuzha',
+    'Kottayam',
+    'Idukki',
+    'Ernakulam',
+    'Thrissur',
+    'Palakkad',
+    'Malappuram',
+    'Kozhikode',
+    'Wayanad',
+    'Kannur',
+    'Kasaragod',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -29,6 +46,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
         setState(() {
           _alerts = alerts;
           _isLoading = false;
+          _error = null;
         });
       }
     } catch (e) {
@@ -63,10 +81,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
       ),
       body: _buildBody(),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          // TODO: Open Report Incident Form
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Report Form Coming Soon')));
-        },
+        onPressed: _openReportAlertForm,
         backgroundColor: AppTheme.primary,
         icon: const Icon(Icons.add_alert_rounded, color: Colors.white),
         label: const Text('REPORT', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -108,12 +123,12 @@ class _AlertsScreenState extends State<AlertsScreen> {
       padding: const EdgeInsets.all(16),
       itemCount: _alerts.length,
       itemBuilder: (context, index) {
-        final alert = _alerts[index];
-        final title = alert['title'] ?? 'Unknown Alert';
-        final description = alert['description'] ?? 'No description provided';
-        final type = (alert['alert_type'] as String).toUpperCase();
-        final district = alert['district'] ?? 'Unknown District';
-        final severity = alert['severity'] ?? 'info';
+        final alert = (_alerts[index] as Map).cast<String, dynamic>();
+        final title = alert['title']?.toString() ?? 'Unknown Alert';
+        final description = alert['description']?.toString() ?? 'No description provided';
+        final type = (alert['alert_type']?.toString() ?? 'general').toUpperCase();
+        final district = alert['district']?.toString() ?? 'Unknown District';
+        final severity = alert['severity']?.toString() ?? 'info';
         final isVerified = alert['is_verified'] == true;
         final color = _getSeverityColor(severity);
 
@@ -178,5 +193,142 @@ class _AlertsScreenState extends State<AlertsScreen> {
         );
       },
     );
+  }
+
+  Future<void> _openReportAlertForm() async {
+    final titleCtrl = TextEditingController();
+    final descriptionCtrl = TextEditingController();
+    final reportedByCtrl = TextEditingController();
+    String selectedType = ApiClient.alertTypes.first;
+    String selectedSeverity = ApiClient.alertSeverities[1];
+    String selectedDistrict = _keralaDistricts.first;
+
+    final submitted = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        bool isSubmitting = false;
+
+        return StatefulBuilder(
+          builder: (ctx, setModalState) {
+            Future<void> submit() async {
+              final title = titleCtrl.text.trim();
+              final description = descriptionCtrl.text.trim();
+              final reporter = reportedByCtrl.text.trim();
+
+              if (title.length < 5 || description.length < 10) {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('Title/description too short for backend validation.')),
+                );
+                return;
+              }
+
+              setModalState(() => isSubmitting = true);
+              try {
+                await _apiClient.createAlert(
+                  title: title,
+                  description: description,
+                  alertType: selectedType,
+                  severity: selectedSeverity,
+                  district: selectedDistrict,
+                  reportedBy: reporter.isEmpty ? null : reporter,
+                );
+                if (ctx.mounted) Navigator.of(ctx).pop(true);
+              } catch (e) {
+                if (ctx.mounted) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    SnackBar(content: Text('Failed to report alert: $e')),
+                  );
+                }
+              } finally {
+                if (ctx.mounted) setModalState(() => isSubmitting = false);
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppTheme.background,
+                  border: Border.all(color: AppTheme.darkText, width: AppTheme.borderWidth),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text('Report Community Alert', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900)),
+                      const SizedBox(height: 12),
+                      TextField(controller: titleCtrl, decoration: const InputDecoration(labelText: 'Title (min 5 chars)')),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: descriptionCtrl,
+                        maxLines: 3,
+                        decoration: const InputDecoration(labelText: 'Description (min 10 chars)'),
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedType,
+                        decoration: const InputDecoration(labelText: 'Alert Type'),
+                        items: ApiClient.alertTypes
+                            .map((v) => DropdownMenuItem(value: v, child: Text(v.toUpperCase())))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) setModalState(() => selectedType = v);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedSeverity,
+                        decoration: const InputDecoration(labelText: 'Severity'),
+                        items: ApiClient.alertSeverities
+                            .map((v) => DropdownMenuItem(value: v, child: Text(v.toUpperCase())))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) setModalState(() => selectedSeverity = v);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedDistrict,
+                        decoration: const InputDecoration(labelText: 'District'),
+                        items: _keralaDistricts
+                            .map((v) => DropdownMenuItem(value: v, child: Text(v)))
+                            .toList(),
+                        onChanged: (v) {
+                          if (v != null) setModalState(() => selectedDistrict = v);
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(controller: reportedByCtrl, decoration: const InputDecoration(labelText: 'Reporter Name (optional)')),
+                      const SizedBox(height: 16),
+                      ElevatedButton(
+                        onPressed: isSubmitting ? null : submit,
+                        child: Text(isSubmitting ? 'SUBMITTING...' : 'SUBMIT ALERT'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    titleCtrl.dispose();
+    descriptionCtrl.dispose();
+    reportedByCtrl.dispose();
+
+    if (submitted == true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Alert submitted successfully.')),
+        );
+      }
+      await _loadAlerts();
+    }
   }
 }

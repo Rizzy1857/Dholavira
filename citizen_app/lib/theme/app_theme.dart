@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class AppTheme {
   // Brand Colors (Neo-Brutalist / Emergency theme)
@@ -35,7 +34,7 @@ class AppTheme {
         surface: surface,
         onSurface: darkText,
       ),
-      textTheme: GoogleFonts.outfitTextTheme().apply(
+      textTheme: ThemeData.light().textTheme.apply(
         bodyColor: darkText,
         displayColor: darkText,
       ),
@@ -44,7 +43,7 @@ class AppTheme {
         elevation: 0,
         centerTitle: false,
         iconTheme: const IconThemeData(color: darkText),
-        titleTextStyle: GoogleFonts.outfit(
+        titleTextStyle: const TextStyle(
           color: darkText,
           fontSize: 24,
           fontWeight: FontWeight.w800,
@@ -57,8 +56,8 @@ class AppTheme {
         unselectedItemColor: darkText.withOpacity(0.5),
         elevation: 0,
         type: BottomNavigationBarType.fixed,
-        selectedLabelStyle: GoogleFonts.outfit(fontWeight: FontWeight.w700, fontSize: 12),
-        unselectedLabelStyle: GoogleFonts.outfit(fontWeight: FontWeight.w500, fontSize: 12),
+        selectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
       ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
@@ -70,7 +69,7 @@ class AppTheme {
             side: BorderSide(color: darkText, width: borderWidth),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          textStyle: GoogleFonts.outfit(fontWeight: FontWeight.w700, fontSize: 16),
+          textStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
         ).copyWith(
           overlayColor: MaterialStateProperty.all(darkText.withOpacity(0.1)),
         ),
